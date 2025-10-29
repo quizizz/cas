@@ -3,10 +3,22 @@ package compare
 
 import (
 	"fmt"
+	"math"
 	"math/big"
+	"math/rand"
+	"time"
 
 	"github.com/quizizz/cas/pkg/ast"
 	"github.com/quizizz/cas/pkg/simplify"
+)
+
+const (
+	// ITERATIONS is the number of test points to use for comparison
+	ITERATIONS = 12
+	// TOLERANCE_EXP is the exponent for tolerance (10^-TOLERANCE_EXP)
+	TOLERANCE_EXP = 9
+	// MAX_EXPONENT_BITS limits exponent size to prevent slow evaluations (2^10 = 1024)
+	MAX_EXPONENT_BITS = 10
 )
 
 // ComparisonResult contains the result of comparing two expressions
@@ -33,7 +45,7 @@ func DefaultOptions() Options {
 	return Options{
 		CheckForm:        false,
 		CheckSimplified:  false,
-		Tolerance:        1e-10,
+		Tolerance:        math.Pow(10, -TOLERANCE_EXP), // 1e-9, matching Node.js
 		RequireVariables: nil,
 	}
 }
@@ -76,7 +88,19 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		}
 	}
 
-	// 2. Check if expressions are identical in structure
+	// 2. Early check for expressions with extremely large exponents before simplification
+	if hasLargeExponents(expr1) || hasLargeExponents(expr2) {
+		return ComparisonResult{
+			Equal:   false,
+			Message: "Expressions contain very large exponents - cannot evaluate safely",
+			Details: map[string]interface{}{
+				"expr1": expr1.String(),
+				"expr2": expr2.String(),
+			},
+		}
+	}
+
+	// 3. Check if expressions are identical in structure
 	if expr1.String() == expr2.String() {
 		return ComparisonResult{
 			Equal:   true,
@@ -84,7 +108,7 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		}
 	}
 
-	// 3. Check semantic equivalence by simplifying both
+	// 4. Check semantic equivalence by simplifying both
 	simplified1 := simplify.Simplify(expr1)
 	simplified2 := simplify.Simplify(expr2)
 
@@ -99,7 +123,7 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		}
 	}
 
-	// 4. Check numeric equivalence by evaluation
+	// 5. Check numeric equivalence by evaluation
 	if len(vars1) > 0 {
 		result := checkNumericEquivalence(expr1, expr2, vars1, options.Tolerance)
 		if result.Equal {
@@ -129,7 +153,7 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		}
 	}
 
-	// 5. Optional form check
+	// 6. Optional form check
 	if options.CheckForm {
 		if !checkSameForm(expr1, expr2) {
 			return ComparisonResult{
@@ -143,7 +167,7 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		}
 	}
 
-	// 6. Optional simplification check
+	// 7. Optional simplification check
 	if options.CheckSimplified {
 		if !isSimplified(expr1) {
 			return ComparisonResult{
@@ -259,33 +283,108 @@ func containsVariable(vars []string, target string) bool {
 }
 
 func checkNumericEquivalence(expr1, expr2 ast.Expr, vars []string, tolerance float64) ComparisonResult {
-	// Test with multiple variable assignments
-	testValues := []float64{0, 1, -1, 2, -2, 0.5, -0.5, 10}
+	// Use a seeded random generator for reproducible results within a test run
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	for _, testVal := range testValues {
+	// Compare at ITERATIONS number of points to determine equality
+	// Similar to the Node.js implementation
+	for i := 0; i < ITERATIONS; i++ {
 		varMap := make(map[string]*big.Float)
+
+		// One third total iterations each with range 10, 100, and 1000
+		rangeExp := 1 + int(math.Floor(3*float64(i)/float64(ITERATIONS)))
+		valueRange := math.Pow(10, float64(rangeExp))
+
+		// Half of the iterations should only use integer values
+		// This is important for expressions like (-2)^x that result in NaN
+		// with non-integer values of x in JavaScript
+		useFloats := i%2 == 0
+
 		for _, varName := range vars {
-			varMap[varName] = big.NewFloat(testVal)
+			var value float64
+			if useFloats {
+				// Generate random float in range [-valueRange, valueRange]
+				value = (rng.Float64()*2 - 1) * valueRange
+			} else {
+				// Generate random integer in range [-valueRange, valueRange]
+				value = float64(rng.Intn(int(2*valueRange)+1) - int(valueRange))
+			}
+			varMap[varName] = big.NewFloat(value)
 		}
 
 		val1, err1 := expr1.Eval(varMap)
 		val2, err2 := expr2.Eval(varMap)
 
-		if err1 != nil || err2 != nil {
-			continue // Skip this test value
+		// Handle evaluation errors - if both expressions fail to evaluate
+		// at the same point, they might still be equivalent
+		if err1 != nil && err2 != nil {
+			continue // Both failed - skip this test point
 		}
-
-		diff := new(big.Float).Sub(val1, val2)
-		diff.Abs(diff)
-		if diff.Cmp(big.NewFloat(tolerance)) > 0 {
+		if err1 != nil || err2 != nil {
+			// Only one failed - expressions are different
 			return ComparisonResult{
 				Equal:   false,
-				Message: fmt.Sprintf("Expressions differ at %v = %f", vars, testVal),
+				Message: fmt.Sprintf("Expressions differ in evaluation success"),
 				Details: map[string]interface{}{
-					"test_value":   testVal,
+					"iteration":   i,
+					"variables":   varMap,
+					"expr1_error": err1 != nil,
+					"expr2_error": err2 != nil,
+				},
+			}
+		}
+
+		// Check for NaN values - if both are NaN, continue
+		val1Float, _ := val1.Float64()
+		val2Float, _ := val2.Float64()
+		if math.IsNaN(val1Float) && math.IsNaN(val2Float) {
+			continue
+		}
+		if math.IsNaN(val1Float) || math.IsNaN(val2Float) {
+			return ComparisonResult{
+				Equal:   false,
+				Message: fmt.Sprintf("One expression evaluates to NaN while the other doesn't"),
+				Details: map[string]interface{}{
+					"iteration": i,
+					"variables": varMap,
+					"expr1_nan": math.IsNaN(val1Float),
+					"expr2_nan": math.IsNaN(val2Float),
+				},
+			}
+		}
+
+		// Check for infinity values
+		if math.IsInf(val1Float, 0) && math.IsInf(val2Float, 0) {
+			if math.IsInf(val1Float, 1) == math.IsInf(val2Float, 1) {
+				continue // Both are same type of infinity
+			}
+		}
+
+		// Perform numeric comparison with tolerance
+		diff := new(big.Float).Sub(val1, val2)
+		diff.Abs(diff)
+
+		// Use relative comparison for large numbers, absolute for small ones
+		var toleranceValue *big.Float
+		if math.Abs(val1Float) < 1 || math.Abs(val2Float) < 1 {
+			toleranceValue = big.NewFloat(tolerance)
+		} else {
+			// Relative tolerance
+			max := big.NewFloat(math.Max(math.Abs(val1Float), math.Abs(val2Float)))
+			toleranceValue = new(big.Float).Mul(max, big.NewFloat(tolerance))
+		}
+
+		if diff.Cmp(toleranceValue) > 0 {
+			return ComparisonResult{
+				Equal:   false,
+				Message: fmt.Sprintf("Expressions differ at test point %d", i),
+				Details: map[string]interface{}{
+					"iteration":    i,
+					"variables":    formatVarMap(varMap),
 					"expr1_result": val1.Text('g', -1),
 					"expr2_result": val2.Text('g', -1),
 					"difference":   diff.Text('g', -1),
+					"tolerance":    toleranceValue.Text('g', -1),
 				},
 			}
 		}
@@ -293,9 +392,9 @@ func checkNumericEquivalence(expr1, expr2 ast.Expr, vars []string, tolerance flo
 
 	return ComparisonResult{
 		Equal:   true,
-		Message: "Expressions are numerically equivalent for tested values",
+		Message: "Expressions are numerically equivalent for all test points",
 		Details: map[string]interface{}{
-			"test_values": testValues,
+			"iterations_tested": ITERATIONS,
 		},
 	}
 }
@@ -326,4 +425,94 @@ func getExpressionForm(expr ast.Expr) string {
 func isSimplified(expr ast.Expr) bool {
 	simplified := simplify.Simplify(expr)
 	return expr.String() == simplified.String()
+}
+
+// formatVarMap converts a variable map to a readable string representation
+func formatVarMap(varMap map[string]*big.Float) map[string]string {
+	result := make(map[string]string)
+	for k, v := range varMap {
+		result[k] = v.Text('g', -1)
+	}
+	return result
+}
+
+// isLargeExponent checks if a big.Float represents an exponent that's too large to evaluate safely
+func isLargeExponent(val *big.Float) bool {
+	intVal := new(big.Int)
+	if val.IsInt() {
+		val.Int(intVal)
+		return intVal.BitLen() > MAX_EXPONENT_BITS
+	}
+	return false
+}
+
+// isLargeComputedExponent tries to evaluate an expression and checks if the result is too large for exponentiation
+func isLargeComputedExponent(expr ast.Expr) bool {
+	emptyVars := make(map[string]*big.Float)
+	if result, err := expr.Eval(emptyVars); err == nil {
+		return isLargeExponent(result)
+	}
+	return false
+}
+
+// hasLargeExponents checks if an expression contains power operations with extremely large exponents
+// that would be prohibitively slow to evaluate numerically
+func hasLargeExponents(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *ast.Add:
+		for _, term := range e.Terms() {
+			if hasLargeExponents(term) {
+				return true
+			}
+		}
+		return false
+
+	case *ast.Mul:
+		for _, term := range e.Terms() {
+			if hasLargeExponents(term) {
+				return true
+			}
+		}
+		return false
+
+	case *ast.Pow:
+		exp := e.Exponent()
+
+		// Check if the exponent is a very large integer
+		if intExp, ok := exp.(*ast.Int); ok {
+			if isLargeExponent(intExp.Value()) {
+				return true
+			}
+		}
+
+		// Check if exponent is a power or multiplication expression that evaluates to a large number
+		if _, ok := exp.(*ast.Pow); ok {
+			if isLargeComputedExponent(exp) {
+				return true
+			}
+		}
+		if _, ok := exp.(*ast.Mul); ok {
+			if isLargeComputedExponent(exp) {
+				return true
+			}
+		}
+
+		// Recursively check base and exponent
+		return hasLargeExponents(e.Base()) || hasLargeExponents(exp)
+
+	case *ast.Func:
+		for _, arg := range e.Args() {
+			if hasLargeExponents(arg) {
+				return true
+			}
+		}
+		return false
+
+	default:
+		return false
+	}
 }

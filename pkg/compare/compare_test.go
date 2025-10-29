@@ -291,3 +291,27 @@ func TestEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestEdgeCases2(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr1    string
+		expr2    string
+		expected bool
+	}{
+		{"slow power expressions", "125^1\\times5^3=2^5\\times5^310^8", "5^6", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr1, _ := parser.Parse(tt.expr1)
+			expr2, _ := parser.Parse(tt.expr2)
+
+			result := Compare(expr1, expr2)
+			t.Logf("Result: Equal=%t, Message=%s", result.Equal, result.Message)
+			if result.Equal != tt.expected {
+				t.Errorf("Compare(%s, %s).Equal = %t, want %t", tt.expr1, tt.expr2, result.Equal, tt.expected)
+			}
+		})
+	}
+}
