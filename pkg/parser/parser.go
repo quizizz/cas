@@ -180,8 +180,12 @@ func (p *Parser) parseExponentialExpression() (ast.Expr, error) {
 	return left, nil
 }
 
-// parseUnaryExpression parses unary operators (negation)
+// parseUnaryExpression parses unary operators (negation and unary plus)
 func (p *Parser) parseUnaryExpression() (ast.Expr, error) {
+	if p.current.Type == TokenPlus {
+		// For KAS compatibility, reject unary plus - KAS doesn't parse "+49"
+		return nil, fmt.Errorf("unexpected token '+' at position %d", p.current.Pos)
+	}
 	if p.current.Type == TokenMinus {
 		p.advance()
 		// Recursively handle multiple minuses like "--x"

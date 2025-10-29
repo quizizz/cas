@@ -208,9 +208,40 @@ func StructurallyEqual(expr1, expr2 ast.Expr) bool {
 
 // SemanticallyEqual checks if two expressions are mathematically equivalent
 func SemanticallyEqual(expr1, expr2 ast.Expr) bool {
+	// First check variables are consistent
+	vars1 := expr1.Variables()
+	vars2 := expr2.Variables()
+
+	if !sameVariables(vars1, vars2) {
+		return false
+	}
+
+	// Try simplification first
 	simplified1 := simplify.Simplify(expr1)
 	simplified2 := simplify.Simplify(expr2)
-	return simplified1.String() == simplified2.String()
+	if simplified1.String() == simplified2.String() {
+		return true
+	}
+
+	// Fall back to numeric comparison like the Node.js implementation
+	if len(vars1) == 0 {
+		// No variables - direct comparison
+		val1, err1 := expr1.Eval(make(map[string]*big.Float))
+		val2, err2 := expr2.Eval(make(map[string]*big.Float))
+
+		if err1 != nil || err2 != nil {
+			return false
+		}
+
+		diff := new(big.Float).Sub(val1, val2)
+		diff.Abs(diff)
+		tolerance := big.NewFloat(math.Pow(10, -TOLERANCE_EXP))
+		return diff.Cmp(tolerance) <= 0
+	}
+
+	// Test with multiple variable values (similar to Node.js compare method)
+	result := checkNumericEquivalence(expr1, expr2, vars1, math.Pow(10, -TOLERANCE_EXP))
+	return result.Equal
 }
 
 // NumericallyEqual checks if expressions evaluate to the same value(s)

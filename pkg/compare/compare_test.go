@@ -37,7 +37,6 @@ func TestStructurallyEqual(t *testing.T) {
 				t.Errorf("Parse error for expr2: %v", err)
 				return
 			}
-
 			result := StructurallyEqual(expr1, expr2)
 			if result != tt.expected {
 				t.Errorf("StructurallyEqual(%s, %s) = %t, want %t", tt.expr1, tt.expr2, result, tt.expected)
@@ -53,8 +52,8 @@ func TestSemanticallyEqual(t *testing.T) {
 		expr2    string
 		expected bool
 	}{
-		{"commutative addition", "x+1", "1+x", false},     // Our simple implementation doesn't handle this yet
-		{"algebraically equivalent", "x+x", "2*x", false}, // Our simple implementation doesn't handle this yet
+		{"commutative addition", "x+1", "1+x", true},
+		{"algebraically equivalent", "x+x", "2*x", true},
 		{"identical", "x+1", "x+1", true},
 		{"different", "x+1", "x+2", false},
 	}
@@ -300,17 +299,28 @@ func TestEdgeCases2(t *testing.T) {
 		expected bool
 	}{
 		{"slow power expressions", "125^1\\times5^3=2^5\\times5^310^8", "5^6", false},
+		{"unary plus", "49", "+49", false},
+		{"commutative multiplication", "7*x+2", "x*7+2", true},
+		{"algebraically equivalent", "317-273", "44", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expr1, _ := parser.Parse(tt.expr1)
-			expr2, _ := parser.Parse(tt.expr2)
+			expr1, parseErr1 := parser.Parse(tt.expr1)
+			expr2, parseErr2 := parser.Parse(tt.expr2)
 
-			result := Compare(expr1, expr2)
-			t.Logf("Result: Equal=%t, Message=%s", result.Equal, result.Message)
-			if result.Equal != tt.expected {
-				t.Errorf("Compare(%s, %s).Equal = %t, want %t", tt.expr1, tt.expr2, result.Equal, tt.expected)
+			isEqual := false
+			message := ""
+			if parseErr1 == nil && parseErr2 == nil {
+				result := Compare(expr1, expr2)
+				isEqual = result.Equal
+				message = result.Message
+			} else {
+				message = "parse error"
+			}
+			t.Logf("Result: Equal=%t, Message=%s", isEqual, message)
+			if isEqual != tt.expected {
+				t.Errorf("Compare(%s, %s).Equal = %t, want %t", tt.expr1, tt.expr2, isEqual, tt.expected)
 			}
 		})
 	}
