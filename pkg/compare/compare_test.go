@@ -305,7 +305,13 @@ func TestEdgeCases2(t *testing.T) {
 		{"different type of equations 1", "x>5", "x<5", false},
 		{"different type of equations 1", "x>-12", "x=-12", false},
 		{"fractional powers", "8", "4^{\\frac{3}{2}}", true},
-		{"rearranged same equations", "3x-4y=16", "3x-4y-16=0", true},
+		{"rearranged equations 1", "3x-4y=16", "3x-4y-16=0", true},
+		{"rearranged equations 2", "x=\\frac{y}{1000}", "y=1000x", true},
+		{"rearranged equations 3", "x\\ge8", "8\\le x", true},
+		{"rearranged equations 4", "y=4x", "y=x4", true},
+		{"rearranged equations 5", "\\frac{2z}{x}=y", "\\frac{z}{y}=\\frac{1}{2}x", true},
+		{"multiple decimals", "0.2", "0.20.0.2", false},
+		{"parsing pi", "\\pi", "\\pi2113", false},
 	}
 
 	for _, tt := range tests {
@@ -316,7 +322,7 @@ func TestEdgeCases2(t *testing.T) {
 			isEqual := false
 			message := ""
 			if parseErr1 == nil && parseErr2 == nil {
-				result := Compare(expr1, expr2)
+				result := CompareWithInputs(expr1, expr2, tt.expr1, tt.expr2)
 				isEqual = result.Equal
 				message = result.Message
 			} else {

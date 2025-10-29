@@ -677,14 +677,169 @@ func (e *Eq) EqType() EqType {
 	return e.eqType
 }
 
-// AsExpr converts equation to expression form (left - right for equalities)
+// AsExpr converts equation to expression form following Node.js KAS algorithm
 func (e *Eq) AsExpr() Expr {
-	if e.eqType == EqEqual {
-		// Convert a = b to a - b
+	return e.AsExprWithOptions(false)
+}
+
+// AsExprWithOptions converts equation to expression form with Node.js KAS algorithm
+// When unfactored=true, returns before divideThrough step
+func (e *Eq) AsExprWithOptions(unfactored bool) Expr {
+	if e.eqType != EqEqual {
+		// For now, only handle equalities
 		negatedRight := NewMul(NewInt(-1), e.right)
 		return NewAdd(e.left, negatedRight)
 	}
-	// For inequalities, we can't easily convert to expression form
-	// Return the equation as-is
-	return e
+
+	// Step 1: Extract terms from both sides
+	var terms []Expr
+
+	// Extract left side terms
+	if add, isAdd := e.left.(*Add); isAdd {
+		terms = append(terms, add.Terms()...)
+	} else if !isZero(e.left) {
+		terms = append(terms, e.left)
+	}
+
+	// Extract right side terms (negated)
+	if add, isAdd := e.right.(*Add); isAdd {
+		for _, term := range add.Terms() {
+			negated := NewMul(NewInt(-1), term)
+			terms = append(terms, negated)
+		}
+	} else if !isZero(e.right) {
+		negated := NewMul(NewInt(-1), e.right)
+		terms = append(terms, negated)
+	}
+
+	// Step 2: Collect each term to handle denominators properly
+	var collectedTerms []Expr
+	for _, term := range terms {
+		if add, isAdd := term.(*Add); isAdd {
+			collectedTerms = append(collectedTerms, add.Collect())
+		} else {
+			collectedTerms = append(collectedTerms, term)
+		}
+	}
+
+	// Step 3: Find all denominators and multiply through
+	denominators := e.extractDenominators(collectedTerms)
+
+	// Multiply all terms by all denominators to clear fractions
+	var finalTerms []Expr
+	for _, term := range collectedTerms {
+		multipliedTerm := term
+		for _, denom := range denominators {
+			if !isOne(denom) {
+				multipliedTerm = NewMul(multipliedTerm, denom)
+			}
+		}
+		finalTerms = append(finalTerms, multipliedTerm)
+	}
+
+	// Step 4: Create the final expression
+	var result Expr
+	if len(finalTerms) == 0 {
+		result = NewInt(0)
+	} else if len(finalTerms) == 1 {
+		result = finalTerms[0]
+	} else {
+		result = NewAdd(finalTerms...)
+	}
+
+	// Step 5: Apply collection
+	if add, isAdd := result.(*Add); isAdd {
+		result = add.Collect()
+	}
+
+	if unfactored {
+		return result
+	}
+
+	// Step 6: Divide through common factors
+	return e.DivideThrough(result)
+}
+
+// extractDenominators finds denominators in terms that need to be cleared
+func (e *Eq) extractDenominators(terms []Expr) []Expr {
+	var denominators []Expr
+
+	for _, term := range terms {
+		denoms := e.findDenominatorsInTerm(term)
+		denominators = append(denominators, denoms...)
+	}
+
+	// Remove duplicates
+	uniqueDenoms := make(map[string]Expr)
+	for _, denom := range denominators {
+		uniqueDenoms[denom.String()] = denom
+	}
+
+	var result []Expr
+	for _, denom := range uniqueDenoms {
+		result = append(result, denom)
+	}
+
+	return result
+}
+
+// findDenominatorsInTerm finds denominators in a single term
+func (e *Eq) findDenominatorsInTerm(term Expr) []Expr {
+	var denoms []Expr
+
+	switch t := term.(type) {
+	case *Mul:
+		for _, factor := range t.Terms() {
+			if pow, isPow := factor.(*Pow); isPow {
+				// Check for negative exponent (indicates division)
+				if intExp, isInt := pow.Exponent().(*Int); isInt {
+					expVal := intExp.IntValue()
+					if expVal.Sign() < 0 {
+						// x^-n means we have x in denominator
+						denoms = append(denoms, pow.Base())
+					}
+				}
+			}
+		}
+
+	case *Pow:
+		// Direct power term
+		if intExp, isInt := t.Exponent().(*Int); isInt {
+			expVal := intExp.IntValue()
+			if expVal.Sign() < 0 {
+				denoms = append(denoms, t.Base())
+			}
+		}
+
+	case *Add:
+		// Recursively check add terms
+		for _, addTerm := range t.Terms() {
+			denoms = append(denoms, e.findDenominatorsInTerm(addTerm)...)
+		}
+	}
+
+	return denoms
+}
+
+// Helper functions for AsExpr
+func isZero(expr Expr) bool {
+	if intExpr, isInt := expr.(*Int); isInt {
+		return intExpr.IntValue().Sign() == 0
+	}
+	if floatExpr, isFloat := expr.(*Float); isFloat {
+		val, _ := floatExpr.Value().Float64()
+		return val == 0.0
+	}
+	return false
+}
+
+func isOne(expr Expr) bool {
+	if intExpr, isInt := expr.(*Int); isInt {
+		return intExpr.IntValue().Cmp(big.NewInt(1)) == 0
+	}
+	if floatExpr, isFloat := expr.(*Float); isFloat {
+		val, _ := floatExpr.Value().Float64()
+		return val == 1.0
+	}
+	return false
 }

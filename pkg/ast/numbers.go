@@ -69,6 +69,11 @@ func (i *Int) Value() *big.Float {
 	return result
 }
 
+// IntValue returns the underlying *big.Int value
+func (i *Int) IntValue() *big.Int {
+	return new(big.Int).Set(i.value)
+}
+
 // Float represents a floating-point constant
 type Float struct {
 	value *big.Float
