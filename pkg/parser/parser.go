@@ -74,15 +74,31 @@ func (p *Parser) parseExpression() (ast.Expr, error) {
 	// Check for comparison operators (equations/inequalities)
 	switch p.current.Type {
 	case TokenEquals, TokenLess, TokenGreater, TokenLessEqual, TokenGreaterEqual, TokenNotEqual:
-		// For now, we'll treat equations as regular expressions
-		// In a full implementation, we'd create an Equation node
+		operator := p.current.Type
 		p.advance()
 		right, err := p.parseArithmeticExpression()
 		if err != nil {
 			return nil, err
 		}
-		// Return a simple representation for now
-		return ast.NewAdd(left, right), nil
+
+		// Map token types to equation types
+		var eqType ast.EqType
+		switch operator {
+		case TokenEquals:
+			eqType = ast.EqEqual
+		case TokenLess:
+			eqType = ast.EqLess
+		case TokenGreater:
+			eqType = ast.EqGreater
+		case TokenLessEqual:
+			eqType = ast.EqLessEqual
+		case TokenGreaterEqual:
+			eqType = ast.EqGreaterEqual
+		case TokenNotEqual:
+			eqType = ast.EqNotEqual
+		}
+
+		return ast.NewEq(left, right, eqType), nil
 	}
 
 	return left, nil

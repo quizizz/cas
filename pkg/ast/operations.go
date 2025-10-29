@@ -2,6 +2,7 @@ package ast
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 )
@@ -431,9 +432,36 @@ func (p *Pow) Eval(vars map[string]*big.Float) (*big.Float, error) {
 		return result, nil
 	}
 
-	// For non-integer exponents, we'd need more sophisticated handling
-	// This is a simplified implementation
-	return nil, fmt.Errorf("non-integer exponents not fully supported yet")
+	// Handle fractional exponents like 3/2, 1/2, etc.
+	// Check if exponent is a rational number (from Rational AST or simple fractions)
+	baseFloat, _ := baseVal.Float64()
+	expFloat, _ := expVal.Float64()
+
+	// For now, use floating point math for fractional powers
+	// This handles cases like 4^(3/2) = 8, 8^(1/3) = 2, etc.
+	if baseFloat > 0 {
+		result := math.Pow(baseFloat, expFloat)
+		return big.NewFloat(result), nil
+	}
+
+	// Handle negative bases with fractional exponents (more complex)
+	if baseFloat < 0 {
+		// For odd denominators, we can handle negative bases
+		// This is a simplified approach - full implementation would check if exponent is n/d where d is odd
+		intExp := int64(expFloat)
+		fracPart := expFloat - float64(intExp)
+
+		if math.Abs(fracPart) < 1e-10 {
+			// Essentially an integer exponent
+			result := math.Pow(baseFloat, float64(intExp))
+			return big.NewFloat(result), nil
+		}
+
+		// For negative base with non-integer exponent, result is complex
+		return nil, fmt.Errorf("negative base with fractional exponent not supported")
+	}
+
+	return nil, fmt.Errorf("power evaluation failed")
 }
 
 func (p *Pow) Simplify() Expr {
@@ -503,4 +531,160 @@ func (p *Pow) Base() Expr {
 
 func (p *Pow) Exponent() Expr {
 	return p.exponent.Clone()
+}
+
+// EqType represents the type of equation/inequality
+type EqType int
+
+const (
+	EqEqual EqType = iota
+	EqLess
+	EqGreater
+	EqLessEqual
+	EqGreaterEqual
+	EqNotEqual
+)
+
+func (et EqType) String() string {
+	switch et {
+	case EqEqual:
+		return "="
+	case EqLess:
+		return "<"
+	case EqGreater:
+		return ">"
+	case EqLessEqual:
+		return "<="
+	case EqGreaterEqual:
+		return ">="
+	case EqNotEqual:
+		return "<>"
+	default:
+		return "="
+	}
+}
+
+// Eq represents an equation or inequality
+type Eq struct {
+	left   Expr
+	right  Expr
+	eqType EqType
+}
+
+// NewEq creates a new equation/inequality expression
+func NewEq(left, right Expr, eqType EqType) *Eq {
+	return &Eq{left: left, right: right, eqType: eqType}
+}
+
+func (e *Eq) String() string {
+	return fmt.Sprintf("%s%s%s", e.left.String(), e.eqType.String(), e.right.String())
+}
+
+func (e *Eq) LaTeX() string {
+	op := e.eqType.String()
+	switch e.eqType {
+	case EqLessEqual:
+		op = "\\le"
+	case EqGreaterEqual:
+		op = "\\ge"
+	case EqNotEqual:
+		op = "\\ne"
+	}
+	return fmt.Sprintf("%s %s %s", e.left.LaTeX(), op, e.right.LaTeX())
+}
+
+func (e *Eq) Eval(vars map[string]*big.Float) (*big.Float, error) {
+	leftVal, err := e.left.Eval(vars)
+	if err != nil {
+		return nil, err
+	}
+	rightVal, err := e.right.Eval(vars)
+	if err != nil {
+		return nil, err
+	}
+
+	result := big.NewFloat(0)
+	switch e.eqType {
+	case EqEqual:
+		if leftVal.Cmp(rightVal) == 0 {
+			result.SetInt64(1)
+		}
+	case EqLess:
+		if leftVal.Cmp(rightVal) < 0 {
+			result.SetInt64(1)
+		}
+	case EqGreater:
+		if leftVal.Cmp(rightVal) > 0 {
+			result.SetInt64(1)
+		}
+	case EqLessEqual:
+		if leftVal.Cmp(rightVal) <= 0 {
+			result.SetInt64(1)
+		}
+	case EqGreaterEqual:
+		if leftVal.Cmp(rightVal) >= 0 {
+			result.SetInt64(1)
+		}
+	case EqNotEqual:
+		if leftVal.Cmp(rightVal) != 0 {
+			result.SetInt64(1)
+		}
+	}
+	return result, nil
+}
+
+func (e *Eq) Simplify() Expr {
+	simplifiedLeft := e.left.Simplify()
+	simplifiedRight := e.right.Simplify()
+	return &Eq{left: simplifiedLeft, right: simplifiedRight, eqType: e.eqType}
+}
+
+func (e *Eq) Equal(other Expr) bool {
+	if other.Type() != TypeEq {
+		return false
+	}
+	otherEq := other.(*Eq)
+	// Different equation types are never equal (key insight from Node.js KAS)
+	if e.eqType != otherEq.eqType {
+		return false
+	}
+	return e.left.Equal(otherEq.left) && e.right.Equal(otherEq.right)
+}
+
+func (e *Eq) Clone() Expr {
+	return &Eq{left: e.left.Clone(), right: e.right.Clone(), eqType: e.eqType}
+}
+
+func (e *Eq) Variables() []string {
+	leftVars := e.left.Variables()
+	rightVars := e.right.Variables()
+	return removeDuplicates(append(leftVars, rightVars...))
+}
+
+func (e *Eq) Type() ExprType {
+	return TypeEq
+}
+
+func (e *Eq) Left() Expr {
+	return e.left.Clone()
+}
+
+func (e *Eq) Right() Expr {
+	return e.right.Clone()
+}
+
+func (e *Eq) EqType() EqType {
+	return e.eqType
+}
+
+// AsExpr converts equation to expression form (left - right for equalities)
+func (e *Eq) AsExpr() Expr {
+	if e.eqType == EqEqual {
+		// Convert a = b to a - b
+		negatedRight := NewMul(NewInt(-1), e.right)
+		return NewAdd(e.left, negatedRight)
+	}
+	// For inequalities, we can't easily convert to expression form
+	// Return the equation as-is
+	return e
 }

@@ -57,6 +57,86 @@ func Compare(expr1, expr2 ast.Expr, opts ...Options) ComparisonResult {
 		options = opts[0]
 	}
 
+	// Handle equation comparison first (from Node.js KAS insight)
+	if expr1.Type() == ast.TypeEq && expr2.Type() == ast.TypeEq {
+		eq1 := expr1.(*ast.Eq)
+		eq2 := expr2.(*ast.Eq)
+
+		// Different equation types are never equal
+		if eq1.EqType() != eq2.EqType() {
+			return ComparisonResult{
+				Equal: false,
+				Message: fmt.Sprintf("Different equation types: %s vs %s",
+					eq1.EqType().String(), eq2.EqType().String()),
+				Details: map[string]interface{}{
+					"expr1_type": eq1.EqType().String(),
+					"expr2_type": eq2.EqType().String(),
+				},
+			}
+		}
+
+		// For equalities, convert to expression form and compare
+		if eq1.EqType() == ast.EqEqual {
+			expr1AsExpr := eq1.AsExpr()
+			expr2AsExpr := eq2.AsExpr()
+
+			// Check if one is the negative of the other (equation rearrangement)
+			negExpr2 := ast.NewMul(ast.NewInt(-1), expr2AsExpr)
+
+			result1 := Compare(expr1AsExpr, expr2AsExpr, options)
+			if result1.Equal {
+				return ComparisonResult{
+					Equal:   true,
+					Message: "Equations are equivalent",
+					Details: map[string]interface{}{
+						"comparison_type": "equation_rearrangement",
+					},
+				}
+			}
+
+			result2 := Compare(expr1AsExpr, negExpr2, options)
+			if result2.Equal {
+				return ComparisonResult{
+					Equal:   true,
+					Message: "Equations are equivalent (rearranged)",
+					Details: map[string]interface{}{
+						"comparison_type": "equation_rearrangement_negative",
+					},
+				}
+			}
+
+			return ComparisonResult{
+				Equal:   false,
+				Message: "Equations are not equivalent",
+				Details: map[string]interface{}{
+					"expr1_as_expr": expr1AsExpr.String(),
+					"expr2_as_expr": expr2AsExpr.String(),
+				},
+			}
+		}
+
+		// For inequalities, use structural comparison
+		if eq1.Left().String() == eq2.Left().String() && eq1.Right().String() == eq2.Right().String() {
+			return ComparisonResult{
+				Equal:   true,
+				Message: "Expressions are structurally identical",
+			}
+		}
+
+		return ComparisonResult{
+			Equal:   false,
+			Message: "Inequalities are not equivalent",
+		}
+	}
+
+	// If one is equation and other is not, they're different
+	if expr1.Type() == ast.TypeEq || expr2.Type() == ast.TypeEq {
+		return ComparisonResult{
+			Equal:   false,
+			Message: "Comparing equation with non-equation expression",
+		}
+	}
+
 	// 1. Check variables are consistent
 	vars1 := expr1.Variables()
 	vars2 := expr2.Variables()

@@ -302,6 +302,10 @@ func TestEdgeCases2(t *testing.T) {
 		{"unary plus", "49", "+49", false},
 		{"commutative multiplication", "7*x+2", "x*7+2", true},
 		{"algebraically equivalent", "317-273", "44", true},
+		{"different type of equations 1", "x>5", "x<5", false},
+		{"different type of equations 1", "x>-12", "x=-12", false},
+		{"fractional powers", "8", "4^{\\frac{3}{2}}", true},
+		{"rearranged same equations", "3x-4y=16", "3x-4y-16=0", true},
 	}
 
 	for _, tt := range tests {
