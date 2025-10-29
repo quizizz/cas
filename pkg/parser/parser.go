@@ -152,7 +152,7 @@ func (p *Parser) parseMultiplicativeExpression() (ast.Expr, error) {
 // isImplicitMultiplication checks if the current position indicates implicit multiplication
 func (p *Parser) isImplicitMultiplication() bool {
 	switch p.current.Type {
-	case TokenVar, TokenLeftParen, TokenSqrt, TokenLn, TokenLog, TokenSin, TokenCos, TokenTan, TokenAbs, TokenPi, TokenE:
+	case TokenVar, TokenLeftParen, TokenLeftBrace, TokenSqrt, TokenFrac, TokenDfrac, TokenLn, TokenLog, TokenSin, TokenCos, TokenTan, TokenAbs, TokenPi, TokenE:
 		return true
 	default:
 		return false
@@ -241,6 +241,8 @@ func (p *Parser) parsePrimaryExpression() (ast.Expr, error) {
 		return p.parseConstant()
 	case TokenLeftParen:
 		return p.parseParentheses()
+	case TokenLeftBrace:
+		return p.parseBraces()
 	case TokenSqrt:
 		return p.parseSqrt()
 	case TokenFrac, TokenDfrac:
@@ -364,10 +366,42 @@ func (p *Parser) parseParentheses() (ast.Expr, error) {
 	return expr, nil
 }
 
-// parseSqrt parses square root expressions
+// parseBraces parses braced expressions (similar to parentheses in LaTeX)
+func (p *Parser) parseBraces() (ast.Expr, error) {
+	if err := p.expect(TokenLeftBrace); err != nil {
+		return nil, err
+	}
+
+	expr, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := p.expect(TokenRightBrace); err != nil {
+		return nil, err
+	}
+
+	return expr, nil
+}
+
+// parseSqrt parses square root expressions, including \sqrt[n]{x} syntax
 func (p *Parser) parseSqrt() (ast.Expr, error) {
 	if err := p.expect(TokenSqrt); err != nil {
 		return nil, err
+	}
+
+	// Handle optional root index [n] in \sqrt[n]{x}
+	var rootIndex ast.Expr
+	if p.current.Type == TokenLeftBracket {
+		p.advance() // consume [
+		var err error
+		rootIndex, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		if err := p.expect(TokenRightBracket); err != nil {
+			return nil, err
+		}
 	}
 
 	var operand ast.Expr
@@ -389,7 +423,14 @@ func (p *Parser) parseSqrt() (ast.Expr, error) {
 		}
 	}
 
-	// Create sqrt function call
+	// If root index is specified, create a power expression: x^(1/n)
+	if rootIndex != nil {
+		// \sqrt[n]{x} = x^(1/n)
+		reciprocalIndex := ast.NewPow(rootIndex, ast.NewInt(-1))
+		return ast.NewPow(operand, reciprocalIndex), nil
+	}
+
+	// Create sqrt function call for standard square root
 	return ast.NewFunc("sqrt", operand), nil
 }
 

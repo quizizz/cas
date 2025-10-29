@@ -18,7 +18,11 @@ func TestStructurallyEqual(t *testing.T) {
 		{"different order", "1+x", "x+1", false},
 		{"different constants", "x+1", "x+2", false},
 		{"different variables", "x+1", "y+1", false},
-		{"same expression", "2*x^2", "2*x^2", true},
+		{"same expression 1", "2*x^2", "2*x^2", true},
+		{"same expression 2", "2^{20}", "2^{20}", true},
+		{"same expression 3", "2^{\\frac{4}{3}}", "2^{\\frac{4}{3}}", true},
+		{"same expression 4", "6\\sqrt[2]{3}", "6\\sqrt[2]{3}", true},
+		{"different fractions", "\\frac{7}{10}\\frac{3}{5}\\frac{5}{11}", "\\frac{7}{10}", false},
 	}
 
 	for _, tt := range tests {

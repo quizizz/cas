@@ -96,6 +96,14 @@ func (t TokenType) String() string {
 		return "("
 	case TokenRightParen:
 		return ")"
+	case TokenLeftBrace:
+		return "{"
+	case TokenRightBrace:
+		return "}"
+	case TokenLeftBracket:
+		return "["
+	case TokenRightBracket:
+		return "]"
 	case TokenSqrt:
 		return "sqrt"
 	case TokenLn:
